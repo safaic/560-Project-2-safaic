@@ -1,0 +1,168 @@
+---
+title: "Project 2 560"
+author: "Cameron Safai"
+date: "2023-03-14"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+require(mlbench)
+library(janitor)
+library(neuralnet)
+library(e1071)
+library(caret)
+library(dplyr)
+
+```
+
+```{r}
+# load the data set
+data(BreastCancer)
+ls(BreastCancer)
+
+#remove NA's
+BreastCancer <- na.omit(BreastCancer)
+
+# remove the unique identifier
+BreastCancer <- BreastCancer[-1]
+
+head(BreastCancer)
+str(BreastCancer)
+
+
+BreastCancer2 <- data.frame(sapply(BreastCancer[1:9], function(x) as.numeric(as.character(x))))
+BreastCancer2 <- scale(BreastCancer2[,1:9],center=TRUE,scale=TRUE)
+BreastCancer2 <- na.omit(BreastCancer2)
+
+
+#Clean names
+BreastCancer <- data.frame(BreastCancer$Class, BreastCancer2)
+BreastCancer <- clean_names(BreastCancer)
+
+
+
+
+```
+```{r}
+#Split train and validation data sets
+set.seed(246)
+splitPercent <- floor(0.6 * nrow(BreastCancer))
+trainSplit100 <- sample(seq_len(nrow(BreastCancer)), size = splitPercent)
+
+train.df <- BreastCancer[trainSplit100, ]
+valid.df <- BreastCancer[-trainSplit100, ]
+```
+
+```{r}
+library(rpart)
+library(rpart.plot)
+library(e1071)
+library(caret)
+
+#Decision Tree
+tr <- rpart(breast_cancer_class ~ ., data = train.df, method = "class")
+prp(tr, type = 1, extra = 1, under = TRUE, split.font = 1, varlen = -10)
+
+#Confusion Matrix for Classification Tree Traning Set
+pred.train.Tree <- predict(tr,train.df,type = "class")
+  confusionMatrix(pred.train.Tree, as.factor(train.df$breast_cancer_class))
+  
+  
+#Confusion Matrix for Classification Tree Validation Set
+pred.train.Tree <- predict(tr,valid.df,type = "class")
+  confusionMatrix(pred.train.Tree, as.factor(valid.df$breast_cancer_class))
+
+#Create prediction data frame for ensemble 
+TRClass<- data.frame(ifelse(pred.train.Tree=="malignant", "1", "0"))
+
+names(TRClass) <- 'tr'
+```
+```{r}
+
+#Naive Bayes 
+nbn <- naiveBayes(breast_cancer_class ~ ., data = train.df)
+
+#Predictions and Confusion Matrix for training set
+pred.class <- predict(nbn, newdata = train.df )
+      confusionMatrix(pred.class, train.df$breast_cancer_class)
+
+#Predictions and Confusion Matrix for validation set
+pred.class <- predict(nbn, newdata = valid.df )
+confusionMatrix(pred.class, valid.df$breast_cancer_class)
+
+#Create prediction data frame for ensemble 
+NBClass <- data.frame(ifelse(pred.class=="malignant", "1", "0"))
+
+names(NBClass) <- 'nb'
+```
+
+```{r}
+
+#Logistic Regression 
+model <- glm(breast_cancer_class ~ ., data = train.df, family = binomial)
+
+#Training Set Predictions and Confusion Matrix
+pred <- predict(model, newdata = train.df, type = "response")
+pred_class <- ifelse(pred > 0.5,  "malignant","benign")
+confusionMatrix(table(pred_class, train.df$breast_cancer_class))
+
+#Validation Set Predictions and Confusion Matrix
+pred <- predict(model, newdata = valid.df, type = "response")
+pred_class <- ifelse(pred > 0.5,  "malignant","benign")
+confusionMatrix(table(pred_class, valid.df$breast_cancer_class))
+
+#Create prediction data frame for ensemble 
+LGClass<- data.frame(ifelse(pred_class=="malignant", "1", "0"))
+
+names(LGClass) <- 'lg'
+
+```
+
+```{r}
+#Neural Network
+library(nnet)
+#Create Model
+nn <- neuralnet(breast_cancer_class ~ ., data =  train.df, hidden=5, linear.output = F, learningrate = 0.01)
+
+#Training Set Prediction and Confusion Matrix
+pred <- neuralnet::compute(nn, train.df)
+predicted.class=apply(pred$net.result,1,which.max)-1
+confusionMatrix(as.factor(ifelse(predicted.class=="1","malignant", "benign" )), as.factor(train.df$breast_cancer_class))
+
+#Validation Set Prediction and Confusion Matrix
+pred <- neuralnet::compute(nn, valid.df)
+predicted.class=apply(pred$net.result,1,which.max)-1
+confusionMatrix(as.factor(ifelse(predicted.class=="1", "malignant", "benign")), as.factor(valid.df$breast_cancer_class))
+
+
+mynnet.pred <- predict(nn,train.df,type="class")
+
+#Create prediction data frame for ensemble 
+nnClass <- data.frame(predicted.class)
+names(nnClass) <- 'nn'
+
+```
+
+```{r}
+#Ensemble Construction 
+
+#combine all predictive results which are based off of the validation data sets for all 4 models
+combPRED <- mutate_all(data.frame(nnClass, TRClass, LGClass, NBClass), as.integer)
+
+combPRED$PREDICTION <- (combPRED$nn + combPRED$tr + combPRED$lg + combPRED$nb)
+
+#vote for classification 
+combPRED$Class <- (ifelse(combPRED$PREDICTION > 2,"malignant","benign"))
+
+table(combPRED$Class)
+
+#confusion matrix for performance statistics 
+confusionMatrix(as.factor(combPRED$Class), valid.df$breast_cancer_class)
+
+
+```
+
